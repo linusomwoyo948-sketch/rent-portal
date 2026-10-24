@@ -1,0 +1,9 @@
+node_modules
+dist
+.netlify
+.env
+.env.*
+!.env.example
+local-data.json
+*.backup.json
+rent-portal-backup-*.json
