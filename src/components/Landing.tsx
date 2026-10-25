@@ -55,6 +55,9 @@ export default function Landing({ error }: Props) {
           </div>
         ))}
       </section>
+      <p className="mt-8 text-center text-xs text-slate-500">
+        <a href="/privacy.html" className="hover:underline">Privacy Policy</a> · <a href="/terms.html" className="hover:underline">Terms of Use</a>
+      </p>
     </div>
   );
 }
