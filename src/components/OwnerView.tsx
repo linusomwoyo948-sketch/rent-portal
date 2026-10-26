@@ -415,15 +415,13 @@ export default function OwnerView({ isMainOwner = true }: { isMainOwner?: boolea
                                             Reactivate
                                         </button>
                                     )}
-                                    {isMainOwner && (
-                                        <button
-                                            onClick={() => remove(r)}
-                                            aria-label={'Remove ' + r.name}
-                                            className='rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600'
-                                        >
-                                            <Trash2 className='h-4 w-4' />
-                                        </button>
-                                    )}
+                                    <button
+                                        onClick={() => remove(r)}
+                                        aria-label={'Remove ' + r.name}
+                                        className='rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600'
+                                    >
+                                        <Trash2 className='h-4 w-4' />
+                                    </button>
                                 </div>
                             </li>
                         ))}
@@ -433,7 +431,6 @@ export default function OwnerView({ isMainOwner = true }: { isMainOwner?: boolea
 
             <ManagersCard canManage={isMainOwner} onNotice={flash} />
 
-            {isMainOwner && (
             <section className='flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-5'>
                 <div>
                     <h2 className='flex items-center gap-2 font-semibold'>
@@ -471,7 +468,6 @@ export default function OwnerView({ isMainOwner = true }: { isMainOwner?: boolea
                     />
                 </label>
             </section>
-            )}
 
             <section className='rounded-2xl border border-slate-200 bg-white p-5'>
                 <h2 className='flex items-center gap-2 font-semibold'>

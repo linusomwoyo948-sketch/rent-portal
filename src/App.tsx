@@ -33,6 +33,7 @@ function Spinner() {
 const ROLE_LABELS: Record<string, string> = {
   owner: 'Site owner',
   manager: 'Site manager',
+  manager_paused: 'Access paused',
   landlord: 'Landlord',
   caretaker: 'Caretaker',
   suspended: 'Account paused',
@@ -128,6 +129,14 @@ function App() {
           <Spinner />
         ) : !me ? (
           <Landing error={error} />
+        ) : me.role === 'manager_paused' ? (
+          <div className="mx-auto max-w-lg rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-600">
+              <Ban className="h-7 w-7" />
+            </div>
+            <h1 className="mt-4 text-xl font-bold">Your site manager access is paused</h1>
+            <p className="mt-2 text-sm text-slate-600">The site owner has temporarily paused your access. Please contact the site owner to restore it.</p>
+          </div>
         ) : me.role === 'suspended' ? (
           <div className="mx-auto max-w-lg rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-600">

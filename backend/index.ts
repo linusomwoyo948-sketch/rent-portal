@@ -5,7 +5,7 @@ const SITE_OWNER_EMAILS = ['linusomwoyo96@gmail.com'];
 // The original landlord account. Its existing data moves into its first plot on the first run.
 const FIRST_LANDLORD_EMAIL = 'linusomwoyo2@gmail.com';
 
-type Role = 'owner' | 'manager' | 'landlord' | 'caretaker' | 'tenant' | 'suspended';
+type Role = 'owner' | 'manager' | 'manager_paused' | 'landlord' | 'caretaker' | 'tenant' | 'suspended';
 type TenantStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
 
 type Tenant = {
@@ -106,7 +106,7 @@ type Plot = {
 };
 
 type PlotName = { plotId: string; landlordKey: string };
-type SiteManager = { email: string; name: string; addedAt: number; addedBy: string };
+type SiteManager = { email: string; name: string; addedAt: number; addedBy: string; status?: 'active' | 'paused' };
 type Staff = { email: string; role: 'caretaker'; landlordKey?: string; addedAt: number };
 type AlertSubscriber = { email: string; landlordKey?: string; addedAt: number };
 type Actor = { role: Role; landlordKey: string; email: string };
@@ -384,7 +384,7 @@ async function actorForEmail(rawEmail: string): Promise<Actor> {
     }
     const [mgr] = await db.get<SiteManager>('site_managers', [managerKey(email)], { consistent: true });
     if (mgr) {
-        return { role: 'manager', landlordKey: '', email };
+        return { role: mgr.status === 'paused' ? 'manager_paused' : 'manager', landlordKey: '', email };
     }
     const lk = landlordKeyOf(email);
     const [ll] = await db.get<Landlord>('landlords', [lk], { consistent: true });
@@ -418,7 +418,7 @@ const requireSiteOwner = async (ctx: { user?: { email?: string } }) => {
     return a.role === 'owner' || a.role === 'manager' ? undefined : error('Only the site owner or a site manager can do this.', 403);
 };
 
-// Only the site owner (not site managers): managers, backups, restoring and permanently removing landlords.
+// Only the site owner: adding, pausing and removing site managers.
 const requireMainOwner = async (ctx: { user?: { email?: string } }) => {
     const a = await getActor(ctx);
     return a.role === 'owner' ? undefined : error('Only the site owner can do this.', 403);
@@ -1690,7 +1690,7 @@ export const handler = router({
                 return error('Enter a valid email address for the caretaker.', 400);
             }
             const other = await actorForEmail(email);
-            if (other.role === 'owner' || other.role === 'manager' || other.role === 'landlord' || (other.role === 'suspended' && other.landlordKey === landlordKeyOf(email))) {
+            if (other.role === 'owner' || other.role === 'manager' || other.role === 'manager_paused' || other.role === 'landlord' || (other.role === 'suspended' && other.landlordKey === landlordKeyOf(email))) {
                 return error('That email belongs to a landlord, the site owner or a site manager.', 400);
             }
             const [existing] = await db.get<Staff>('staff', [staffKey(email)], { consistent: true });
@@ -1818,7 +1818,7 @@ export const handler = router({
 
     'DELETE /api/owner/landlords/:id': [
         requireAuth(),
-        requireMainOwner,
+        requireSiteOwner,
         async (ctx) => {
             const actor = await getActor(ctx);
             const id = ctx.params.id;
@@ -1924,7 +1924,7 @@ export const handler = router({
     // Full backup of every landlord, plot, tenant, bill and payment (site owner only).
     'GET /api/owner/export': [
         requireAuth(),
-        requireMainOwner,
+        requireSiteOwner,
         async (ctx) => {
             const actor = await getActor(ctx);
             const all = await admin.dump();
@@ -1943,7 +1943,7 @@ export const handler = router({
     // Replaces all data with a backup file (for example the one downloaded from the old site).
     'POST /api/owner/import': [
         requireAuth(),
-        requireMainOwner,
+        requireSiteOwner,
         async (ctx) => {
             const actor = await getActor(ctx);
             const body = (ctx.body ?? {}) as { confirm?: string; backup?: { format?: string; tables?: unknown } };
@@ -1967,6 +1967,11 @@ export const handler = router({
                 if (t.startsWith('push_')) {
                     tables[t] = rows;
                 }
+            }
+            // The site managers list is controlled only by the site owner, so a restore never changes it.
+            delete tables.site_managers;
+            if (current.site_managers) {
+                tables.site_managers = current.site_managers;
             }
             const vapid = (current.meta ?? []).find((r) => r.id === 'vapid');
             tables.meta = (tables.meta ?? []).filter((r) => r.id !== 'migration_v2' && r.id !== 'vapid');
@@ -2010,7 +2015,7 @@ export const handler = router({
             if (other.role === 'owner') {
                 return error('That is the site owner account.', 400);
             }
-            if (other.role === 'manager') {
+            if (other.role === 'manager' || other.role === 'manager_paused') {
                 return error('This email is already a site manager.', 409);
             }
             if (other.role !== 'tenant') {
@@ -2023,13 +2028,36 @@ export const handler = router({
             if (req && req.status === 'pending') {
                 return error('That email has a landlord application waiting. Decline it first, or use a different email.', 400);
             }
-            const record: SiteManager = { email, name, addedAt: Date.now(), addedBy: actor.email };
+            const record: SiteManager = { email, name, addedAt: Date.now(), addedBy: actor.email, status: 'active' };
             const [created] = await db.tx.add('site_managers', [{ id: managerKey(email), ...record }]);
             if (!created) {
                 return error('This email is already a site manager.', 409);
             }
             await audit('owner', actor.email, 'Site manager added', name + ' <' + email + '>');
             return json({ manager: { ...record, id: managerKey(email) } }, 201);
+        },
+    ],
+
+    'POST /api/owner/managers/:id/status': [
+        requireAuth(),
+        requireMainOwner,
+        async (ctx) => {
+            const actor = await getActor(ctx);
+            const id = ctx.params.id;
+            if (!SAFE_ID.test(id)) {
+                return error('Invalid request.', 400);
+            }
+            const status = clean(((ctx.body ?? {}) as Record<string, unknown>).status, 10);
+            if (status !== 'active' && status !== 'paused') {
+                return error('Invalid status.', 400);
+            }
+            const [ok] = await db.tx.update('site_managers', [{ id, record: { status } }], { patch: true });
+            if (!ok) {
+                return error('Site manager not found.', 404);
+            }
+            const [m] = await db.get<SiteManager>('site_managers', [id], { consistent: true });
+            await audit('owner', actor.email, status === 'paused' ? 'Site manager paused' : 'Site manager reactivated', (m?.name ?? '') + ' <' + (m?.email ?? '') + '>');
+            return json({ manager: { ...m, id } });
         },
     ],
 

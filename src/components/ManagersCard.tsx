@@ -5,7 +5,7 @@ import { api } from '../platform/client';
 import { confirmDialog } from './Dialog';
 import { errorMessage, formatDateTime } from '../util';
 
-type Manager = { id: string; email: string; name: string; addedAt: number; addedBy: string };
+type Manager = { id: string; email: string; name: string; addedAt: number; addedBy: string; status?: 'active' | 'paused' };
 
 // Site managers help the site owner run the owner page. Only the site owner can add or remove them.
 export default function ManagersCard({ canManage, onNotice }: { canManage: boolean; onNotice: (m: string) => void }) {
@@ -50,6 +50,22 @@ export default function ManagersCard({ canManage, onNotice }: { canManage: boole
         }
     }
 
+    async function setStatus(m: Manager, status: 'active' | 'paused') {
+        if (
+            status === 'paused' &&
+            !(await confirmDialog('Pause ' + m.name + '? They will not be able to open the site owner page until you reactivate them.', { confirmLabel: 'Pause manager' }))
+        ) {
+            return;
+        }
+        try {
+            await api.post('/api/owner/managers/' + encodeURIComponent(m.id) + '/status', { status });
+            setManagers((prev) => (prev ?? []).map((x) => (x.id === m.id ? { ...x, status } : x)));
+            onNotice(status === 'paused' ? m.name + ' is paused.' : m.name + ' can use the site owner page again.');
+        } catch (ex) {
+            setErr(errorMessage(ex));
+        }
+    }
+
     async function remove(m: Manager) {
         if (!(await confirmDialog('Remove ' + m.name + ' as a site manager? They will no longer be able to open the site owner page.', { confirmLabel: 'Remove manager', danger: true }))) {
             return;
@@ -72,8 +88,9 @@ export default function ManagersCard({ canManage, onNotice }: { canManage: boole
                 Site managers
             </h2>
             <p className='mt-1 text-sm text-slate-600'>
-                Site managers help you run this page. They can review landlord applications, add landlords, pause or reactivate them and see the activity log.
-                Only you can add or remove site managers, download or restore backups and permanently remove landlords.
+                {canManage
+                    ? 'Site managers can do everything on this page that you can, except manage site managers. Only you can add, pause or remove them, and nobody can pause or remove the site owner.'
+                    : 'Site managers can do everything on this page except add, pause or remove site managers. Only the site owner can do that.'}
             </p>
 
             {canManage && (
@@ -115,11 +132,25 @@ export default function ManagersCard({ canManage, onNotice }: { canManage: boole
                     {managers.map((m) => (
                         <li key={m.id} className='flex items-center justify-between gap-3 p-3'>
                             <div className='min-w-0'>
-                                <p className='font-medium'>{m.name}</p>
+                                <p className='flex flex-wrap items-center gap-2 font-medium'>
+                                    {m.name}
+                                    {m.status === 'paused' ? (
+                                        <span className='rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800'>Paused</span>
+                                    ) : (
+                                        <span className='rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700'>Active</span>
+                                    )}
+                                </p>
                                 <p className='truncate text-sm text-slate-600'>{m.email}</p>
                                 <p className='text-xs text-slate-400'>Added {formatDateTime(m.addedAt)}</p>
                             </div>
                             {canManage && (
+                                <div className='flex shrink-0 items-center gap-2'>
+                                <button
+                                    onClick={() => setStatus(m, m.status === 'paused' ? 'active' : 'paused')}
+                                    className='rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-slate-50'
+                                >
+                                    {m.status === 'paused' ? 'Reactivate' : 'Pause'}
+                                </button>
                                 <button
                                     onClick={() => remove(m)}
                                     aria-label={'Remove ' + m.name}
@@ -127,6 +158,7 @@ export default function ManagersCard({ canManage, onNotice }: { canManage: boole
                                 >
                                     <Trash2 className='h-4 w-4' />
                                 </button>
+                                </div>
                             )}
                         </li>
                     ))}

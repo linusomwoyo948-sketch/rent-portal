@@ -2,7 +2,7 @@ export type TenantStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
 
 export type AccountMode = 'shared' | 'per_tenant' | 'per_tenant_paybill';
 
-export type Role = 'owner' | 'manager' | 'landlord' | 'caretaker' | 'tenant' | 'suspended';
+export type Role = 'owner' | 'manager' | 'manager_paused' | 'landlord' | 'caretaker' | 'tenant' | 'suspended';
 
 export type Tenant = {
     userId: string;
