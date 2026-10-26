@@ -3,13 +3,14 @@ import type { FormEvent } from 'react';
 import { api } from '../platform/client';
 import { AlertCircle, Building2, CheckCircle2, Download, Inbox, Loader2, MapPin, Phone, ShieldCheck, Trash2, Upload, UserPlus } from 'lucide-react';
 import StatusBadge from './StatusBadge';
+import ManagersCard from './ManagersCard';
 import { DialogHost, askDialog, confirmDialog } from './Dialog';
 import type { LandlordRequest, LandlordRow } from '../types';
 import { errorMessage, formatDateTime } from '../util';
 
 type AuditEntry = { id: string; at: number; by: string; action: string; detail: string };
 
-export default function OwnerView() {
+export default function OwnerView({ isMainOwner = true }: { isMainOwner?: boolean }) {
     const [rows, setRows] = useState<LandlordRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -224,7 +225,7 @@ export default function OwnerView() {
         <div className='space-y-6'>
             <div>
                 <DialogHost />
-                <h1 className='text-2xl font-bold'>Site owner</h1>
+                <h1 className='text-2xl font-bold'>{isMainOwner ? 'Site owner' : 'Site manager'}</h1>
                 <p className='text-sm text-slate-600'>Admit landlords to the portal. Each landlord manages their own plots, tenants and payments.</p>
             </div>
 
@@ -414,13 +415,15 @@ export default function OwnerView() {
                                             Reactivate
                                         </button>
                                     )}
-                                    <button
-                                        onClick={() => remove(r)}
-                                        aria-label={'Remove ' + r.name}
-                                        className='rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600'
-                                    >
-                                        <Trash2 className='h-4 w-4' />
-                                    </button>
+                                    {isMainOwner && (
+                                        <button
+                                            onClick={() => remove(r)}
+                                            aria-label={'Remove ' + r.name}
+                                            className='rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600'
+                                        >
+                                            <Trash2 className='h-4 w-4' />
+                                        </button>
+                                    )}
                                 </div>
                             </li>
                         ))}
@@ -428,6 +431,9 @@ export default function OwnerView() {
                 )}
             </section>
 
+            <ManagersCard canManage={isMainOwner} onNotice={flash} />
+
+            {isMainOwner && (
             <section className='flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-5'>
                 <div>
                     <h2 className='flex items-center gap-2 font-semibold'>
@@ -465,6 +471,7 @@ export default function OwnerView() {
                     />
                 </label>
             </section>
+            )}
 
             <section className='rounded-2xl border border-slate-200 bg-white p-5'>
                 <h2 className='flex items-center gap-2 font-semibold'>

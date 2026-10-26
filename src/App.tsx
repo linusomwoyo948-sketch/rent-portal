@@ -32,6 +32,7 @@ function Spinner() {
 
 const ROLE_LABELS: Record<string, string> = {
   owner: 'Site owner',
+  manager: 'Site manager',
   landlord: 'Landlord',
   caretaker: 'Caretaker',
   suspended: 'Account paused',
@@ -139,8 +140,8 @@ function App() {
           </div>
         ) : (
           <Suspense fallback={<Spinner />}>
-            {me.role === 'owner' ? (
-              <OwnerView />
+            {me.role === 'owner' || me.role === 'manager' ? (
+              <OwnerView isMainOwner={me.role === 'owner'} />
             ) : me.isAdmin ? (
               <AdminView role={me.role === 'landlord' ? 'landlord' : 'caretaker'} />
             ) : (

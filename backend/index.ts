@@ -5,7 +5,7 @@ const SITE_OWNER_EMAILS = ['linusomwoyo96@gmail.com'];
 // The original landlord account. Its existing data moves into its first plot on the first run.
 const FIRST_LANDLORD_EMAIL = 'linusomwoyo2@gmail.com';
 
-type Role = 'owner' | 'landlord' | 'caretaker' | 'tenant' | 'suspended';
+type Role = 'owner' | 'manager' | 'landlord' | 'caretaker' | 'tenant' | 'suspended';
 type TenantStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
 
 type Tenant = {
@@ -106,6 +106,7 @@ type Plot = {
 };
 
 type PlotName = { plotId: string; landlordKey: string };
+type SiteManager = { email: string; name: string; addedAt: number; addedBy: string };
 type Staff = { email: string; role: 'caretaker'; landlordKey?: string; addedAt: number };
 type AlertSubscriber = { email: string; landlordKey?: string; addedAt: number };
 type Actor = { role: Role; landlordKey: string; email: string };
@@ -182,6 +183,11 @@ function landlordKeyOf(email: string): string {
 
 function staffKey(email: string): string {
     return 'staff_' + email.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
+}
+
+// People the site owner admits to help run the site owner page.
+function managerKey(email: string): string {
+    return 'mgr_' + email.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
 }
 
 function tenantKey(userId: string): string {
@@ -376,6 +382,10 @@ async function actorForEmail(rawEmail: string): Promise<Actor> {
     if (SITE_OWNER_EMAILS.includes(email)) {
         return { role: 'owner', landlordKey: '', email };
     }
+    const [mgr] = await db.get<SiteManager>('site_managers', [managerKey(email)], { consistent: true });
+    if (mgr) {
+        return { role: 'manager', landlordKey: '', email };
+    }
     const lk = landlordKeyOf(email);
     const [ll] = await db.get<Landlord>('landlords', [lk], { consistent: true });
     if (ll) {
@@ -402,7 +412,14 @@ async function getActor(ctx: { user?: { email?: string } }): Promise<Actor> {
     return actor;
 }
 
+// The site owner and the site managers they admit.
 const requireSiteOwner = async (ctx: { user?: { email?: string } }) => {
+    const a = await getActor(ctx);
+    return a.role === 'owner' || a.role === 'manager' ? undefined : error('Only the site owner or a site manager can do this.', 403);
+};
+
+// Only the site owner (not site managers): managers, backups, restoring and permanently removing landlords.
+const requireMainOwner = async (ctx: { user?: { email?: string } }) => {
     const a = await getActor(ctx);
     return a.role === 'owner' ? undefined : error('Only the site owner can do this.', 403);
 };
@@ -1673,8 +1690,8 @@ export const handler = router({
                 return error('Enter a valid email address for the caretaker.', 400);
             }
             const other = await actorForEmail(email);
-            if (other.role === 'owner' || other.role === 'landlord' || (other.role === 'suspended' && other.landlordKey === landlordKeyOf(email))) {
-                return error('That email belongs to a landlord or the site owner.', 400);
+            if (other.role === 'owner' || other.role === 'manager' || other.role === 'landlord' || (other.role === 'suspended' && other.landlordKey === landlordKeyOf(email))) {
+                return error('That email belongs to a landlord, the site owner or a site manager.', 400);
             }
             const [existing] = await db.get<Staff>('staff', [staffKey(email)], { consistent: true });
             if (existing && existing.landlordKey && existing.landlordKey !== actor.landlordKey) {
@@ -1755,6 +1772,10 @@ export const handler = router({
             if (SITE_OWNER_EMAILS.includes(email)) {
                 return error('That is the site owner account.', 400);
             }
+            const [asMgr] = await db.get<SiteManager>('site_managers', [managerKey(email)], { consistent: true });
+            if (asMgr) {
+                return error('That email is a site manager. Remove it from site managers first.', 400);
+            }
             const [st] = await db.get<Staff>('staff', [staffKey(email)], { consistent: true });
             if (st) {
                 return error('That email is a caretaker for a landlord. Ask the landlord to remove it first.', 400);
@@ -1797,7 +1818,7 @@ export const handler = router({
 
     'DELETE /api/owner/landlords/:id': [
         requireAuth(),
-        requireSiteOwner,
+        requireMainOwner,
         async (ctx) => {
             const actor = await getActor(ctx);
             const id = ctx.params.id;
@@ -1863,6 +1884,10 @@ export const handler = router({
             if (req.userId && (await findTenant(req.userId))) {
                 return error('That email has since joined a plot as a tenant, so it cannot also be a landlord.', 400);
             }
+            const [asMgr] = await db.get<SiteManager>('site_managers', [managerKey(req.email)], { consistent: true });
+            if (asMgr) {
+                return error('That email is now a site manager, so it cannot also be a landlord.', 400);
+            }
             const lk = landlordKeyOf(req.email);
             const record: Landlord = { email: req.email, name: req.name, phone: req.phone, status: 'active', addedAt: Date.now() };
             const [created] = await db.tx.add('landlords', [{ id: lk, ...record }]);
@@ -1899,7 +1924,7 @@ export const handler = router({
     // Full backup of every landlord, plot, tenant, bill and payment (site owner only).
     'GET /api/owner/export': [
         requireAuth(),
-        requireSiteOwner,
+        requireMainOwner,
         async (ctx) => {
             const actor = await getActor(ctx);
             const all = await admin.dump();
@@ -1918,7 +1943,7 @@ export const handler = router({
     // Replaces all data with a backup file (for example the one downloaded from the old site).
     'POST /api/owner/import': [
         requireAuth(),
-        requireSiteOwner,
+        requireMainOwner,
         async (ctx) => {
             const actor = await getActor(ctx);
             const body = (ctx.body ?? {}) as { confirm?: string; backup?: { format?: string; tables?: unknown } };
@@ -1953,6 +1978,77 @@ export const handler = router({
             migrationDone = true;
             await audit('owner', actor.email, 'Backup restored', count + ' records');
             return json({ ok: true, records: count, tables: Object.keys(tables).length });
+        },
+    ],
+
+    // ----- site managers (people who help the site owner) -----
+
+    'GET /api/owner/managers': [
+        requireAuth(),
+        requireSiteOwner,
+        async () => {
+            const r = await db.list<SiteManager>('site_managers', { limit: 100 });
+            return json({ managers: [...r.items].sort((a, b) => a.addedAt - b.addedAt) });
+        },
+    ],
+
+    'POST /api/owner/managers': [
+        requireAuth(),
+        requireMainOwner,
+        async (ctx) => {
+            const actor = await getActor(ctx);
+            const body = (ctx.body ?? {}) as Record<string, unknown>;
+            const email = clean(body.email, 120).toLowerCase();
+            const name = clean(body.name, 80);
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                return error('Enter a valid email address for the site manager.', 400);
+            }
+            if (!name) {
+                return error('Enter the site manager\'s name.', 400);
+            }
+            const other = await actorForEmail(email);
+            if (other.role === 'owner') {
+                return error('That is the site owner account.', 400);
+            }
+            if (other.role === 'manager') {
+                return error('This email is already a site manager.', 409);
+            }
+            if (other.role !== 'tenant') {
+                return error('That email belongs to a landlord or caretaker. A site manager needs a separate email address.', 400);
+            }
+            if (await findTenant(userIdForEmail(email))) {
+                return error('That email is registered as a tenant. A site manager needs a separate email address.', 400);
+            }
+            const [req] = await db.get<LandlordRequest>('landlord_requests', [landlordKeyOf(email)], { consistent: true });
+            if (req && req.status === 'pending') {
+                return error('That email has a landlord application waiting. Decline it first, or use a different email.', 400);
+            }
+            const record: SiteManager = { email, name, addedAt: Date.now(), addedBy: actor.email };
+            const [created] = await db.tx.add('site_managers', [{ id: managerKey(email), ...record }]);
+            if (!created) {
+                return error('This email is already a site manager.', 409);
+            }
+            await audit('owner', actor.email, 'Site manager added', name + ' <' + email + '>');
+            return json({ manager: { ...record, id: managerKey(email) } }, 201);
+        },
+    ],
+
+    'DELETE /api/owner/managers/:id': [
+        requireAuth(),
+        requireMainOwner,
+        async (ctx) => {
+            const actor = await getActor(ctx);
+            const id = ctx.params.id;
+            if (!SAFE_ID.test(id)) {
+                return error('Invalid request.', 400);
+            }
+            const [m] = await db.get<SiteManager>('site_managers', [id], { consistent: true });
+            if (!m) {
+                return error('Site manager not found.', 404);
+            }
+            await db.delete('site_managers', [id]);
+            await audit('owner', actor.email, 'Site manager removed', m.name + ' <' + m.email + '>');
+            return json({ ok: true });
         },
     ],
 
