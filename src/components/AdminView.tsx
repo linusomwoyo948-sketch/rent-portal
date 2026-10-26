@@ -632,11 +632,13 @@ const EMPTY_PLOT: PlotValues = { name: '', paybillNumber: '', paybillName: '', p
 
 function PlotForm({
     initial,
+    plotId,
     submitLabel,
     onSubmit,
     onCancel,
 }: {
     initial: PlotValues;
+    plotId?: string;
     submitLabel: string;
     onSubmit: (v: PlotValues) => Promise<void>;
     onCancel?: () => void;
@@ -644,12 +646,48 @@ function PlotForm({
     const [v, setV] = useState<PlotValues>(initial);
     const [busy, setBusy] = useState(false);
     const [err, setErr] = useState('');
+    const [nameCheck, setNameCheck] = useState<{ name: string; state: 'checking' | 'ok' | 'taken'; message: string } | null>(null);
     const field = 'mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+    const unchangedName = v.name.trim().toLowerCase() === initial.name.trim().toLowerCase() && !!plotId;
+
+    // Check the plot name shortly after the landlord stops typing.
+    useEffect(() => {
+        const name = v.name.trim();
+        if (!name || unchangedName) {
+            setNameCheck(null);
+            return;
+        }
+        setNameCheck({ name, state: 'checking', message: '' });
+        let cancelled = false;
+        const t = setTimeout(() => {
+            api.get('/api/admin/plots/name-check?name=' + encodeURIComponent(name) + (plotId ? '&plotId=' + encodeURIComponent(plotId) : ''))
+                .then((res) => {
+                    if (!cancelled) {
+                        setNameCheck({ name, state: res.data.available ? 'ok' : 'taken', message: res.data.message || '' });
+                    }
+                })
+                .catch(() => {
+                    if (!cancelled) {
+                        setNameCheck(null);
+                    }
+                });
+        }, 500);
+        return () => {
+            cancelled = true;
+            clearTimeout(t);
+        };
+    }, [v.name, plotId, unchangedName]);
+
+    const nameTaken = nameCheck?.state === 'taken';
 
     async function submit(e: FormEvent) {
         e.preventDefault();
         if (!v.name.trim()) {
             setErr('Enter the plot name.');
+            return;
+        }
+        if (nameTaken) {
+            setErr(nameCheck!.message);
             return;
         }
         setBusy(true);
@@ -667,8 +705,33 @@ function PlotForm({
         <form onSubmit={submit} noValidate className='space-y-3 rounded-xl bg-slate-50 p-4'>
             <label className='block text-sm font-medium text-slate-700'>
                 Plot name (tenants type this to join)
-                <input value={v.name} onChange={(e) => setV((s) => ({ ...s, name: e.target.value }))} maxLength={60} placeholder='e.g. Sunrise Court' className={field} />
+                <input
+                    value={v.name}
+                    onChange={(e) => {
+                        setErr('');
+                        setV((s) => ({ ...s, name: e.target.value }));
+                    }}
+                    maxLength={60}
+                    placeholder='e.g. Sunrise Court'
+                    aria-invalid={nameTaken}
+                    className={field + (nameTaken ? ' border-rose-500 ring-2 ring-rose-200' : nameCheck?.state === 'ok' ? ' border-emerald-500' : '')}
+                />
             </label>
+            {nameCheck?.state === 'checking' && (
+                <p className='-mt-1 flex items-center gap-1 text-xs text-slate-500'>
+                    <Loader2 className='h-3 w-3 animate-spin' /> Checking the name…
+                </p>
+            )}
+            {nameCheck?.state === 'ok' && (
+                <p className='-mt-1 flex items-center gap-1 text-xs text-emerald-700'>
+                    <CheckCircle2 className='h-3.5 w-3.5' /> This name is available.
+                </p>
+            )}
+            {nameTaken && (
+                <p role='alert' className='-mt-1 flex items-start gap-1.5 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700'>
+                    <AlertCircle className='mt-0.5 h-4 w-4 shrink-0' /> {nameCheck!.message}
+                </p>
+            )}
             {v.accountMode !== 'per_tenant_paybill' && (
             <div className='grid gap-3 sm:grid-cols-2'>
                 <label className='block text-sm font-medium text-slate-700'>
@@ -762,7 +825,7 @@ function PlotForm({
             <div className='flex gap-2'>
                 <button
                     type='submit'
-                    disabled={busy}
+                    disabled={busy || nameTaken}
                     className='inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-70'
                 >
                     {busy && <Loader2 className='h-4 w-4 animate-spin' />}
@@ -857,6 +920,7 @@ function PlotsCard({ plots, onChange, onNotice }: { plots: Plot[]; onChange: (p:
                                         paymentInstructions: p.paymentInstructions,
                                         accountMode: p.accountMode || 'shared',
                                     }}
+                                    plotId={p.id}
                                     submitLabel='Save plot'
                                     onSubmit={(v) => save(p.id, v)}
                                     onCancel={() => setEditing(null)}

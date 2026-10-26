@@ -1339,6 +1339,32 @@ export const handler = router({
 
     // ----- landlord only -----
 
+    // Checks a plot name while the landlord types it, before saving.
+    'GET /api/admin/plots/name-check': [
+        requireAuth(),
+        requireLandlord,
+        async (ctx) => {
+            const actor = await getActor(ctx);
+            const name = clean(ctx.query.name, 60);
+            const plotId = clean(ctx.query.plotId, 80);
+            const key = plotNameKey(name);
+            if (key.length < 2) {
+                return json({ available: false, message: 'Enter a plot name with at least two letters or numbers.' });
+            }
+            const [pn] = await db.get<PlotName>('plot_names', [key], { consistent: true });
+            if (!pn || (pn.landlordKey === actor.landlordKey && pn.plotId === plotId)) {
+                return json({ available: true, message: '' });
+            }
+            if (pn.landlordKey === actor.landlordKey) {
+                return json({ available: false, message: 'You already have a plot named "' + name + '". Choose a different name.' });
+            }
+            return json({
+                available: false,
+                message: 'The plot name "' + name + '" already exists in the system. Please choose a different name, for example by adding the area or street.',
+            });
+        },
+    ],
+
     'POST /api/admin/plots': [
         requireAuth(),
         requireLandlord,
@@ -1359,7 +1385,7 @@ export const handler = router({
                 ]);
             } catch (e) {
                 if (isAppDatabaseError(e) && e.code === 'AppDatabaseDuplicateId') {
-                    return error('A plot called "' + v.name + '" already exists on this site. Choose a different name.', 409);
+                    return error('The plot name "' + v.name + '" already exists in the system. Please choose a different name, for example by adding the area or street.', 409);
                 }
                 throw e;
             }
@@ -1396,7 +1422,7 @@ export const handler = router({
                     ]);
                 } catch (e) {
                     if (isAppDatabaseError(e) && e.code === 'AppDatabaseDuplicateId') {
-                        return error('A plot called "' + v.name + '" already exists on this site. Choose a different name.', 409);
+                        return error('The plot name "' + v.name + '" already exists in the system. Please choose a different name, for example by adding the area or street.', 409);
                     }
                     throw e;
                 }
